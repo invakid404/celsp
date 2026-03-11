@@ -2,7 +2,7 @@
 //!
 //! Provides efficient byte offset <-> LSP position conversion with proper UTF-16 handling.
 
-use tower_lsp::lsp_types::Position;
+use lsp_types::Position;
 
 /// Pre-computed line index for efficient position lookups.
 ///
@@ -102,10 +102,10 @@ impl LineIndex {
     }
 
     /// Convert a byte span to an LSP range.
-    pub fn span_to_range(&self, span: &std::ops::Range<usize>) -> tower_lsp::lsp_types::Range {
+    pub fn span_to_range(&self, span: &std::ops::Range<usize>) -> lsp_types::Range {
         let start = self.offset_to_position(span.start);
         let end = self.offset_to_position(span.end);
-        tower_lsp::lsp_types::Range::new(start, end)
+        lsp_types::Range::new(start, end)
     }
 }
 

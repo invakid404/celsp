@@ -5,10 +5,14 @@
 //! - `CelRegion` and `OffsetMapper` for embedded CEL in host documents
 //! - `DocumentState` and `DocumentStore` for document lifecycle management
 
+#[cfg(not(target_arch = "wasm32"))]
 mod region;
 mod state;
 mod text;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub use region::{CelRegion, OffsetMapper};
-pub use state::{DocumentKind, DocumentState, DocumentStore, ProtoDocumentState};
+pub use state::DocumentState;
+#[cfg(not(target_arch = "wasm32"))]
+pub use state::{DocumentKind, DocumentStore, ProtoDocumentState};
 pub use text::LineIndex;

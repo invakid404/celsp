@@ -4,11 +4,11 @@ use cel_core::{
     types::{BinaryOp, Expr, UnaryOp},
     SpannedExpr,
 };
-use tower_lsp::lsp_types::{
-    SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokensLegend,
-};
+use lsp_types::{SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokensLegend};
 
-use crate::document::{LineIndex, ProtoDocumentState};
+use crate::document::LineIndex;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::document::ProtoDocumentState;
 use crate::types::is_builtin;
 
 /// Token type indices (must match LEGEND order).
@@ -58,6 +58,9 @@ struct RawToken {
 struct TokenCollector<'a> {
     source: &'a str,
     tokens: Vec<RawToken>,
+    /// (start_offset, iter_range_length) for each comprehension.
+    /// Used to filter synthetic tokens that overlap the real iter target.
+    comp_iter_ranges: Vec<(usize, usize)>,
 }
 
 impl<'a> TokenCollector<'a> {
@@ -65,6 +68,7 @@ impl<'a> TokenCollector<'a> {
         Self {
             source,
             tokens: Vec::new(),
+            comp_iter_ranges: Vec::new(),
         }
     }
 
@@ -84,11 +88,35 @@ impl<'a> TokenCollector<'a> {
     }
 
     /// Find a single character in the source between start and end.
+    /// Returns None for out-of-bounds ranges (e.g. synthetic macro spans).
     fn find_char(&self, start: usize, end: usize, c: char) -> Option<usize> {
+        if start >= end || end > self.source.len() {
+            return None;
+        }
         self.source[start..end].find(c).map(|i| start + i)
     }
 
+    /// Advance past ASCII whitespace.
+    fn skip_whitespace(&self, start: usize, end: usize) -> usize {
+        let mut cursor = start;
+        while cursor < end
+            && self
+                .source
+                .as_bytes()
+                .get(cursor)
+                .map_or(false, |b| b.is_ascii_whitespace())
+        {
+            cursor += 1;
+        }
+        cursor
+    }
+
     fn visit_expr(&mut self, expr: &SpannedExpr) {
+        // Skip expressions with spans outside the source — these are
+        // synthetic nodes from macro expansion (exists, all, filter, map).
+        if expr.span.start > expr.span.end || expr.span.end > self.source.len() {
+            return;
+        }
         match &expr.node {
             Expr::Null => {
                 self.push(expr.span.start, expr.span.end, token_types::KEYWORD, 0);
@@ -345,13 +373,86 @@ impl<'a> TokenCollector<'a> {
                 self.push_punctuation(expr.span.end - 1, 1);
             }
             Expr::Comprehension(comp) => {
-                // Comprehensions are synthetic - visit sub-expressions
-                // Note: The original macro call is in source_info.macro_calls for IDE display
+                // Comprehensions are macro expansions (exists, all, filter, map).
+                // The AST loses the original call structure, so we reconstruct
+                // tokens for the macro name, punctuation, and iteration variables
+                // from the source text and ComprehensionData fields.
+                //
+                // Record the comprehension start + iter_range length so we can
+                // filter out synthetic tokens that overlap the real iter target.
+                let iter_len = comp
+                    .iter_range
+                    .span
+                    .end
+                    .saturating_sub(comp.iter_range.span.start);
+                self.comp_iter_ranges.push((expr.span.start, iter_len));
+
+                // Receiver / iter_range (e.g., "labels")
                 self.visit_expr(&comp.iter_range);
-                self.visit_expr(&comp.accu_init);
-                self.visit_expr(&comp.loop_condition);
+
+                let after_iter = comp.iter_range.span.end;
+                let comp_end = expr.span.end;
+
+                // Dot between receiver and macro name
+                if let Some(dot_pos) = self.find_char(after_iter, comp_end, '.') {
+                    self.push_punctuation(dot_pos, 1);
+
+                    // Opening paren — macro name is between dot+1 and paren
+                    if let Some(paren_pos) = self.find_char(dot_pos + 1, comp_end, '(') {
+                        let macro_start = dot_pos + 1;
+                        if macro_start < paren_pos {
+                            self.push(
+                                macro_start,
+                                paren_pos,
+                                token_types::FUNCTION,
+                                token_modifiers::DEFAULT_LIBRARY,
+                            );
+                        }
+                        self.push_punctuation(paren_pos, 1);
+
+                        // Iteration variable(s) and commas
+                        let mut cursor = paren_pos + 1;
+
+                        // First iter var
+                        if !comp.iter_var.is_empty() {
+                            cursor = self.skip_whitespace(cursor, comp_end);
+                            let var_end = cursor + comp.iter_var.len();
+                            if var_end <= comp_end && &self.source[cursor..var_end] == comp.iter_var
+                            {
+                                self.push(cursor, var_end, token_types::VARIABLE, 0);
+                                cursor = var_end;
+                            }
+                        }
+
+                        // Second iter var (3-arg macros like all(k, v, cond))
+                        if !comp.iter_var2.is_empty() {
+                            if let Some(comma_pos) = self.find_char(cursor, comp_end, ',') {
+                                self.push_punctuation(comma_pos, 1);
+                                cursor = self.skip_whitespace(comma_pos + 1, comp_end);
+                                let var_end = cursor + comp.iter_var2.len();
+                                if var_end <= comp_end
+                                    && &self.source[cursor..var_end] == comp.iter_var2
+                                {
+                                    self.push(cursor, var_end, token_types::VARIABLE, 0);
+                                    cursor = var_end;
+                                }
+                            }
+                        }
+
+                        // Comma before the predicate/body expression
+                        if let Some(comma_pos) = self.find_char(cursor, comp_end, ',') {
+                            self.push_punctuation(comma_pos, 1);
+                        }
+                    }
+                }
+
+                // The user's predicate/transform lives inside loop_step
                 self.visit_expr(&comp.loop_step);
-                self.visit_expr(&comp.result);
+
+                // Closing paren
+                if comp_end > 0 {
+                    self.push_punctuation(comp_end - 1, 1);
+                }
             }
             Expr::MemberTestOnly { expr: inner, field } => {
                 // MemberTestOnly is the expansion of has(expr.field)
@@ -425,13 +526,35 @@ impl<'a> TokenCollector<'a> {
             BinaryOp::Or => "||",
         };
 
-        let slice = &self.source[start..end];
-        slice.find(op_str).map(|offset| (op_str, offset))
+        if start >= end || end > self.source.len() {
+            return None;
+        }
+        self.source[start..end]
+            .find(op_str)
+            .map(|offset| (op_str, offset))
     }
 
     fn into_semantic_tokens(mut self, line_index: &LineIndex) -> Vec<SemanticToken> {
-        // Sort by position
+        // Sort by position.
         self.tokens.sort_by_key(|t| t.start);
+
+        // Comprehension (macro) expansion produces synthetic tokens at the
+        // comprehension's start offset that overlap the real iter_range
+        // token. At each comprehension start, keep only the token whose
+        // length matches the iter_range — the rest are synthetic junk.
+        if !self.comp_iter_ranges.is_empty() {
+            self.tokens.retain(|t| {
+                if let Some(&(_, iter_len)) = self
+                    .comp_iter_ranges
+                    .iter()
+                    .find(|(start, _)| *start == t.start)
+                {
+                    t.length == iter_len
+                } else {
+                    true
+                }
+            });
+        }
 
         let mut result = Vec::with_capacity(self.tokens.len());
         let mut prev_line = 0u32;
@@ -469,6 +592,7 @@ pub fn tokens_for_ast(line_index: &LineIndex, ast: &SpannedExpr) -> Vec<Semantic
     collector.into_semantic_tokens(line_index)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Generate semantic tokens for a proto document containing CEL regions.
 ///
 /// This processes all CEL regions, generates tokens for each, and maps
@@ -501,6 +625,7 @@ pub fn tokens_for_proto(state: &ProtoDocumentState) -> Vec<SemanticToken> {
 }
 
 /// Convert raw tokens to delta-encoded semantic tokens.
+#[cfg(not(target_arch = "wasm32"))]
 fn encode_tokens(tokens: &[RawToken], line_index: &LineIndex) -> Vec<SemanticToken> {
     let mut result = Vec::with_capacity(tokens.len());
     let mut prev_line = 0u32;
@@ -621,5 +746,55 @@ mod tests {
         assert_eq!(tokens[3].token_type, token_types::PUNCTUATION); // .
         assert_eq!(tokens[4].token_type, token_types::VARIABLE); // field
         assert_eq!(tokens[5].token_type, token_types::PUNCTUATION); // )
+    }
+
+    #[test]
+    fn tokens_for_exists_macro_no_overlap() {
+        // Regression: the comprehension expansion creates a synthetic Ident("l")
+        // whose span overlaps with the start of "labels". Without dedup, this
+        // produces a 1-char token at the same offset as the 6-char "labels"
+        // token, causing the first letter to render in a different color.
+        let source = r#"labels.exists(l, l.startsWith("prod"))"#;
+        let result = parse(source);
+        let ast = result.ast.unwrap();
+        let line_index = LineIndex::new(source.to_string());
+
+        let tokens = tokens_for_ast(&line_index, &ast);
+
+        // labels  .  exists  (  l  ,  l  .  startsWith  (  "prod"  )  )
+        let expected_types = vec![
+            (token_types::VARIABLE, 6, "labels"),
+            (token_types::PUNCTUATION, 1, "."),
+            (token_types::FUNCTION, 6, "exists"),
+            (token_types::PUNCTUATION, 1, "("),
+            (token_types::VARIABLE, 1, "l"),
+            (token_types::PUNCTUATION, 1, ","),
+            (token_types::VARIABLE, 1, "l"),
+            (token_types::PUNCTUATION, 1, "."),
+            (token_types::METHOD, 10, "startsWith"),
+            (token_types::PUNCTUATION, 1, "("),
+            (token_types::STRING, 6, "\"prod\""),
+            (token_types::PUNCTUATION, 1, ")"),
+            (token_types::PUNCTUATION, 1, ")"),
+        ];
+        assert_eq!(
+            tokens.len(),
+            expected_types.len(),
+            "expected {} tokens, got {}",
+            expected_types.len(),
+            tokens.len()
+        );
+        for (i, (tt, len, label)) in expected_types.iter().enumerate() {
+            assert_eq!(
+                tokens[i].token_type, *tt,
+                "token {i} ({label}): expected type {tt}, got {}",
+                tokens[i].token_type
+            );
+            assert_eq!(
+                tokens[i].length, *len as u32,
+                "token {i} ({label}): expected length {len}, got {}",
+                tokens[i].length
+            );
+        }
     }
 }

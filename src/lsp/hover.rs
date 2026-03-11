@@ -1,9 +1,12 @@
 //! Hover information for CEL expressions.
 
 use cel_core::{types::Expr, CheckError, CheckErrorKind, CheckResult, SpannedExpr};
-use tower_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position};
+use lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind, Position};
 
-use crate::document::{LineIndex, ProtoDocumentState};
+use crate::document::LineIndex;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::document::ProtoDocumentState;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::protovalidate::get_protovalidate_builtin;
 use crate::types::{get_builtin, FunctionDef};
 
@@ -230,6 +233,7 @@ pub fn hover_at_position(
     hover_for_node(line_index, node, check_result)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Get hover information for a position in a proto document.
 ///
 /// This finds the CEL region at the given position, locates the AST node,
