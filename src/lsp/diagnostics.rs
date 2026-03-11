@@ -1,9 +1,11 @@
 //! Diagnostics conversion from parser and check errors to LSP diagnostics.
 
 use cel_core::{CheckError, CheckErrorKind, ParseError};
-use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString};
+use lsp_types::{Diagnostic, DiagnosticSeverity, NumberOrString};
 
-use crate::document::{LineIndex, ProtoDocumentState};
+use crate::document::LineIndex;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::document::ProtoDocumentState;
 
 /// Convert parser errors to LSP diagnostics.
 fn parse_errors_to_diagnostics(errors: &[ParseError], line_index: &LineIndex) -> Vec<Diagnostic> {
@@ -68,6 +70,7 @@ pub fn to_diagnostics(
     diagnostics
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Convert all errors from a proto document to LSP diagnostics.
 ///
 /// This processes all CEL regions in the proto document, converting their

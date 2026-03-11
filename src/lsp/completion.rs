@@ -6,9 +6,12 @@
 
 use cel_core::types::Expr;
 use cel_core::{CelType, Env, SpannedExpr};
-use tower_lsp::lsp_types::*;
+use lsp_types::*;
 
-use crate::document::{LineIndex, ProtoDocumentState};
+use crate::document::LineIndex;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::document::ProtoDocumentState;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::protovalidate::PROTOVALIDATE_BUILTINS;
 use crate::types::{get_builtin, FunctionDef};
 
@@ -303,11 +306,12 @@ fn identifier_completions(env: &Env, prefix: &str, is_proto: bool) -> Vec<Comple
 /// Look up documentation for a function from builtins or protovalidate builtins.
 fn get_function_docs(name: &str, is_proto: bool) -> Option<Documentation> {
     let builtin: Option<&FunctionDef> = get_builtin(name).or_else(|| {
+        #[cfg(not(target_arch = "wasm32"))]
         if is_proto {
-            PROTOVALIDATE_BUILTINS.get(name)
-        } else {
-            None
+            return PROTOVALIDATE_BUILTINS.get(name);
         }
+        let _ = is_proto; // suppress unused warning on wasm
+        None
     });
     builtin.map(|b| {
         let mut doc = format!("{}\n\n{}", b.signature, b.description);
@@ -349,6 +353,7 @@ pub fn completion_at_position(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Generate completions at a position in a proto document.
 pub fn completion_at_position_proto(
     state: &ProtoDocumentState,

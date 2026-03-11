@@ -3,12 +3,18 @@
 use std::sync::Arc;
 
 use cel_core::{parse, CheckError, CheckResult, Env, ParseError, SpannedExpr};
-use cel_core_proto::ProstProtoRegistry;
-use dashmap::DashMap;
-use tower_lsp::lsp_types::Url;
 
+#[cfg(not(target_arch = "wasm32"))]
+use cel_core_proto::ProstProtoRegistry;
+#[cfg(not(target_arch = "wasm32"))]
+use dashmap::DashMap;
+#[cfg(not(target_arch = "wasm32"))]
+use lsp_types::Url;
+
+#[cfg(not(target_arch = "wasm32"))]
 use crate::protovalidate::extract_cel_regions;
 
+#[cfg(not(target_arch = "wasm32"))]
 use super::region::CelRegionState;
 use super::text::LineIndex;
 
@@ -72,6 +78,7 @@ impl DocumentState {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// State for a .proto file containing embedded CEL expressions.
 #[derive(Debug, Clone)]
 pub struct ProtoDocumentState {
@@ -85,6 +92,7 @@ pub struct ProtoDocumentState {
     pub version: i32,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl ProtoDocumentState {
     /// Create a new proto document state by extracting and parsing CEL regions.
     pub fn new(
@@ -122,6 +130,7 @@ impl ProtoDocumentState {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Unified document state that can be either a pure CEL file or a proto file.
 #[derive(Debug, Clone)]
 pub enum DocumentKind {
@@ -131,12 +140,14 @@ pub enum DocumentKind {
     Proto(ProtoDocumentState),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Thread-safe storage for open documents.
 #[derive(Debug, Default)]
 pub struct DocumentStore {
     documents: DashMap<Url, Arc<DocumentKind>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl DocumentStore {
     /// Create a new empty document store.
     pub fn new() -> Self {
@@ -184,6 +195,7 @@ impl DocumentStore {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Check if a URI refers to a .proto file.
 fn is_proto_file(uri: &Url) -> bool {
     uri.path().ends_with(".proto")
