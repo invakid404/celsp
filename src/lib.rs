@@ -9,6 +9,7 @@
 
 mod document;
 mod lsp;
+mod type_parser;
 pub(crate) mod types;
 
 pub use document::{DocumentState, LineIndex};
@@ -317,6 +318,7 @@ mod wasm {
 
     use crate::document::DocumentState;
     use crate::lsp;
+    use crate::type_parser::parse_type_string;
 
     /// CEL expression analyzer exposed to JavaScript via wasm-bindgen.
     ///
@@ -333,30 +335,14 @@ mod wasm {
 
     /// Parse a JSON type definition into a CelType.
     ///
-    /// Accepts the wasm-cel format:
-    ///   - strings: "int", "string", "bool", "uint", "double", "bytes",
-    ///              "timestamp", "duration", "dyn", "null", "list", "map"
+    /// Accepts the celsp type-string syntax and the legacy/object wasm-cel format:
+    ///   - strings: "int", "optional(string)", "map(string, optional(int))", ...
     ///   - objects: { "kind": "list", "elementType": ... }
     ///              { "kind": "map", "keyType": ..., "valueType": ... }
     ///              { "kind": "optional", "innerType": ... }
     fn parse_cel_type(v: &Value) -> Option<CelType> {
         match v {
-            Value::String(s) => match s.as_str() {
-                "bool" => Some(CelType::Bool),
-                "int" => Some(CelType::Int),
-                "uint" => Some(CelType::UInt),
-                "double" => Some(CelType::Double),
-                "string" => Some(CelType::String),
-                "bytes" => Some(CelType::Bytes),
-                "timestamp" => Some(CelType::Timestamp),
-                "duration" => Some(CelType::Duration),
-                "dyn" => Some(CelType::Dyn),
-                "null" => Some(CelType::Null),
-                // Bare "list" / "map" without parameters → list<dyn> / map<dyn, dyn>
-                "list" => Some(CelType::List(Arc::new(CelType::Dyn))),
-                "map" => Some(CelType::Map(Arc::new(CelType::Dyn), Arc::new(CelType::Dyn))),
-                _ => None,
-            },
+            Value::String(s) => parse_type_string(s).ok(),
             Value::Object(obj) => {
                 let kind = obj.get("kind")?.as_str()?;
                 match kind {
