@@ -342,7 +342,13 @@ mod wasm {
     ///              { "kind": "optional", "innerType": ... }
     fn parse_cel_type(v: &Value) -> Option<CelType> {
         match v {
-            Value::String(s) => parse_type_string(s).ok(),
+            Value::String(s) => match s.as_str() {
+                // Preserve the legacy wasm transport shorthand for unconstrained
+                // container types while still supporting the full celsp parser.
+                "list" => Some(CelType::list(CelType::Dyn)),
+                "map" => Some(CelType::map(CelType::Dyn, CelType::Dyn)),
+                _ => parse_type_string(s).ok(),
+            },
             Value::Object(obj) => {
                 let kind = obj.get("kind")?.as_str()?;
                 match kind {
