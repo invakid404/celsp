@@ -338,6 +338,7 @@ mod wasm {
     ///              "timestamp", "duration", "dyn", "null", "list", "map"
     ///   - objects: { "kind": "list", "elementType": ... }
     ///              { "kind": "map", "keyType": ..., "valueType": ... }
+    ///              { "kind": "optional", "innerType": ... }
     fn parse_cel_type(v: &Value) -> Option<CelType> {
         match v {
             Value::String(s) => match s.as_str() {
@@ -367,6 +368,10 @@ mod wasm {
                         let key = parse_cel_type(obj.get("keyType")?)?;
                         let val = parse_cel_type(obj.get("valueType")?)?;
                         Some(CelType::Map(Arc::new(key), Arc::new(val)))
+                    }
+                    "optional" => {
+                        let inner = parse_cel_type(obj.get("innerType")?)?;
+                        Some(CelType::optional(inner))
                     }
                     _ => None,
                 }
