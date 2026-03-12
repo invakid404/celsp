@@ -72,7 +72,12 @@ fn split_map_types(s: &str) -> Result<(&str, &str), String> {
     for (i, c) in s.char_indices() {
         match c {
             '(' => depth += 1,
-            ')' => depth -= 1,
+            ')' => {
+                if depth == 0 {
+                    return Err(format!("unbalanced parentheses in map type: '{}'", s));
+                }
+                depth -= 1;
+            }
             ',' if depth == 0 => {
                 if split_pos.is_some() {
                     return Err(format!("map type has more than 2 parameters: '{}'", s));
@@ -81,6 +86,10 @@ fn split_map_types(s: &str) -> Result<(&str, &str), String> {
             }
             _ => {}
         }
+    }
+
+    if depth != 0 {
+        return Err(format!("unbalanced parentheses in map type: '{}'", s));
     }
 
     match split_pos {

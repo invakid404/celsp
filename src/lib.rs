@@ -348,12 +348,12 @@ mod wasm {
                 match kind {
                     "list" => {
                         let elem = parse_cel_type(obj.get("elementType")?)?;
-                        Some(CelType::List(Arc::new(elem)))
+                        Some(CelType::list(elem))
                     }
                     "map" => {
                         let key = parse_cel_type(obj.get("keyType")?)?;
                         let val = parse_cel_type(obj.get("valueType")?)?;
-                        Some(CelType::Map(Arc::new(key), Arc::new(val)))
+                        Some(CelType::map(key, val))
                     }
                     "optional" => {
                         let inner = parse_cel_type(obj.get("innerType")?)?;
